@@ -128,6 +128,32 @@ describe('Server', () => {
     });
   });
 
+  describe('listen', () => {
+    let compiler;
+    let server;
+
+    beforeAll(() => {
+      compiler = webpack(config);
+    });
+
+    afterEach((done) => {
+      server.close(() => {
+        done();
+      });
+    });
+
+    it('should listen and not throw error', () => {
+      const options = {
+        port,
+        host: 'localhost',
+      };
+
+      server = new Server(compiler, options);
+
+      expect(() => server.listen(port, 'localhost')).not.toThrowError();
+    });
+  });
+
   describe('checkHost', () => {
     let compiler;
     let server;
