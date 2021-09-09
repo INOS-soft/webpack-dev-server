@@ -1,276 +1,31 @@
-'use strict';
+"use strict";
 
 /* eslint-disable
   class-methods-use-this
 */
-const request = require('supertest');
-const webpack = require('webpack');
-const sockjs = require('sockjs');
-const SockJS = require('sockjs-client/dist/sockjs');
-const Server = require('../../lib/Server');
-const SockJSServer = require('../../lib/servers/SockJSServer');
-const config = require('../fixtures/simple-config/webpack.config');
-const BaseServer = require('../../lib/servers/BaseServer');
-const port = require('../ports-map')['web-socket-server-option'];
+const sockjs = require("sockjs");
+const SockJS = require("sockjs-client/dist/sockjs");
+const config = require("../fixtures/simple-config/webpack.config");
+const BaseServer = require("../../lib/servers/BaseServer");
+const port = require("../ports-map")["web-socket-server-option"];
 
-describe('webSocketServer', () => {
-  describe('server', () => {
-    let mockedTestServer;
+describe("webSocketServer", () => {
+  describe("server", () => {
     let testServer;
     let server;
-    let req;
 
-    const serverModes = [
-      {
-        title: 'as a string ("sockjs")',
-        webSocketServer: 'sockjs',
-        expected: 'SockJSServer',
-      },
-      {
-        title: 'as a path ("sockjs")',
-        client: { transport: 'sockjs' },
-        webSocketServer: require.resolve('../../lib/servers/SockJSServer'),
-        expected: 'SockJSServer',
-      },
-      {
-        title: 'as a string ("ws")',
-        webSocketServer: 'ws',
-        expected: 'WebsocketServer',
-      },
-      {
-        title: 'as a path ("ws")',
-        client: { transport: 'ws' },
-        webSocketServer: require.resolve('../../lib/servers/WebsocketServer'),
-        expected: 'WebsocketServer',
-      },
-    ];
-
-    describe('is passed to getSocketServerImplementation correctly', () => {
-      serverModes.forEach((data) => {
-        it(data.title, async () => {
-          const compiler = webpack(config);
-
-          server = new Server(
-            {
-              client: data.client,
-              webSocketServer: data.webSocketServer,
-              port,
-            },
-            compiler
-          );
-
-          await new Promise((resolve, reject) => {
-            server.listen(port, '127.0.0.1', (error) => {
-              if (error) {
-                reject(error);
-
-                return;
-              }
-
-              resolve();
-            });
-          });
-
-          expect(server.webSocketServer.constructor.name).toBe(data.expected);
-
-          await new Promise((resolve) => {
-            server.close(() => {
-              resolve();
-            });
-          });
-        });
-      });
-    });
-
-    describe('passed to server', () => {
+    describe("passed to server", () => {
       beforeAll(() => {
-        jest.unmock('../../lib/utils/getSocketServerImplementation');
-        testServer = require('../helpers/test-server');
+        jest.unmock("../../lib/utils/getSocketServerImplementation");
+        testServer = require("../helpers/test-server");
       });
 
       afterEach((done) => {
         testServer.close(done);
-        req = null;
         server = null;
       });
 
-      describe('as a string ("sockjs")', () => {
-        beforeEach((done) => {
-          server = testServer.start(
-            config,
-            {
-              webSocketServer: 'sockjs',
-              port,
-            },
-            done
-          );
-          req = request(`http://localhost:${port}`);
-        });
-
-        it('sockjs path responds with a 200', async () => {
-          const res = await req.get('/ws');
-          expect(res.status).toEqual(200);
-        });
-      });
-
-      describe('as a path ("sockjs")', () => {
-        beforeEach((done) => {
-          server = testServer.start(
-            config,
-            {
-              client: { transport: 'sockjs' },
-              webSocketServer: require.resolve(
-                '../../lib/servers/SockJSServer'
-              ),
-              port,
-            },
-            done
-          );
-          req = request(`http://localhost:${port}`);
-        });
-
-        it('sockjs path responds with a 200', async () => {
-          const res = await req.get('/ws');
-          expect(res.status).toEqual(200);
-        });
-      });
-
-      describe('as a class ("sockjs")', () => {
-        beforeEach((done) => {
-          server = testServer.start(
-            config,
-            {
-              client: { transport: 'sockjs' },
-              webSocketServer: SockJSServer,
-              port,
-            },
-            done
-          );
-          req = request(`http://localhost:${port}`);
-        });
-
-        it('sockjs path responds with a 200', async () => {
-          const res = await req.get('/ws');
-          expect(res.status).toEqual(200);
-        });
-      });
-
-      describe('as a class (custom "sockjs" implementation)', () => {
-        let customServerUsed = false;
-
-        it('uses supplied server implementation', (done) => {
-          server = testServer.start(
-            config,
-            {
-              port,
-              client: { transport: 'sockjs' },
-              webSocketServer: class MySockJSServer extends BaseServer {
-                constructor(serv) {
-                  super(serv);
-
-                  this.implementation = sockjs.createServer({
-                    // Use provided up-to-date sockjs-client
-                    sockjs_url: '/__webpack_dev_server__/sockjs.bundle.js',
-                    // Limit useless logs
-                    log: (severity, line) => {
-                      if (severity === 'error') {
-                        this.server.logger.error(line);
-                      } else if (severity === 'info') {
-                        this.server.logger.log(line);
-                      } else {
-                        this.server.logger.debug(line);
-                      }
-                    },
-                  });
-
-                  this.implementation.installHandlers(this.server.server, {
-                    prefix: 'ws',
-                  });
-
-                  customServerUsed = true;
-                }
-
-                close(callback) {
-                  [...this.server.webSocketConnections].forEach((socket) => {
-                    this.closeConnection(socket);
-                  });
-
-                  if (callback) {
-                    callback();
-                  }
-                }
-
-                closeConnection(connection) {
-                  connection.close();
-                }
-
-                send(connection, message) {
-                  connection.write(message);
-                }
-
-                onConnection(f) {
-                  this.implementation.on('connection', (connection) => {
-                    f(connection, connection.headers);
-                  });
-                }
-
-                onConnectionClose(connection, f) {
-                  connection.on('close', f);
-                }
-              },
-            },
-            () => {
-              expect(customServerUsed).toBeTruthy();
-              done();
-            }
-          );
-        });
-      });
-
-      describe('as a path with nonexistent path', () => {
-        it('should throw an error', async () => {
-          const compiler = webpack(config);
-
-          server = new Server(
-            {
-              client: { transport: 'ws' },
-              webSocketServer: '/bad/path/to/implementation',
-              port,
-            },
-            compiler
-          );
-
-          let thrownError;
-
-          try {
-            await new Promise((resolve, reject) => {
-              server.listen(port, '127.0.0.1', (error) => {
-                if (error) {
-                  reject(error);
-
-                  return;
-                }
-
-                resolve();
-              });
-            });
-          } catch (error) {
-            thrownError = error;
-          }
-
-          expect(thrownError.message).toMatch(
-            /webSocketServer \(webSocketServer\.type\) must be a string/
-          );
-
-          await new Promise((resolve) => {
-            server.close(() => {
-              resolve();
-            });
-          });
-        });
-      });
-
-      describe.skip('without a header', () => {
+      describe.skip("without a header", () => {
         let mockWarn;
 
         beforeAll((done) => {
@@ -278,18 +33,18 @@ describe('webSocketServer', () => {
             config,
             {
               port,
-              client: { transport: 'sockjs' },
+              client: { webSocketTransport: "sockjs" },
               webSocketServer: class MySockJSServer extends BaseServer {
                 constructor(serv) {
                   super(serv);
                   this.implementation = sockjs.createServer({
                     // Use provided up-to-date sockjs-client
-                    sockjs_url: '/__webpack_dev_server__/sockjs.bundle.js',
+                    sockjs_url: "/__webpack_dev_server__/sockjs.bundle.js",
                     // Limit useless logs
                     log: (severity, line) => {
-                      if (severity === 'error') {
+                      if (severity === "error") {
                         this.server.logger.error(line);
-                      } else if (severity === 'info') {
+                      } else if (severity === "info") {
                         this.server.logger.log(line);
                       } else {
                         this.server.logger.debug(line);
@@ -298,7 +53,7 @@ describe('webSocketServer', () => {
                   });
 
                   this.implementation.installHandlers(this.server.server, {
-                    prefix: '/ws',
+                    prefix: "/ws",
                   });
                 }
 
@@ -321,13 +76,13 @@ describe('webSocketServer', () => {
                 }
 
                 onConnection(f) {
-                  this.implementation.on('connection', (connection) => {
+                  this.implementation.on("connection", (connection) => {
                     f(connection);
                   });
                 }
 
                 onConnectionClose(connection, f) {
-                  connection.on('close', f);
+                  connection.on("close", f);
                 }
               },
             },
@@ -335,16 +90,16 @@ describe('webSocketServer', () => {
           );
 
           mockWarn = jest
-            .spyOn(server.logger, 'warn')
+            .spyOn(server.logger, "warn")
             .mockImplementation(() => {});
         });
 
-        it('results in an error', (done) => {
+        it("results in an error", (done) => {
           const data = [];
           const client = new SockJS(`http://localhost:${port}/ws`);
 
           client.onopen = () => {
-            data.push('open');
+            data.push("open");
           };
 
           client.onmessage = (e) => {
@@ -352,7 +107,7 @@ describe('webSocketServer', () => {
           };
 
           client.onclose = () => {
-            data.push('close');
+            data.push("close");
           };
 
           setTimeout(() => {
@@ -382,24 +137,24 @@ describe('webSocketServer', () => {
         });
       });
 
-      describe.skip('with a bad host header', () => {
+      describe.skip("with a bad host header", () => {
         beforeAll((done) => {
           server = testServer.start(
             config,
             {
               port,
-              client: { transport: 'sockjs' },
+              client: { webSocketTransport: "sockjs" },
               webSocketServer: class MySockJSServer extends BaseServer {
                 constructor(serv) {
                   super(serv);
                   this.implementation = sockjs.createServer({
                     // Use provided up-to-date sockjs-client
-                    sockjs_url: '/__webpack_dev_server__/sockjs.bundle.js',
+                    sockjs_url: "/__webpack_dev_server__/sockjs.bundle.js",
                     // Limit useless logs
                     log: (severity, line) => {
-                      if (severity === 'error') {
+                      if (severity === "error") {
                         this.server.logger.error(line);
-                      } else if (severity === 'info') {
+                      } else if (severity === "info") {
                         this.server.logger.log(line);
                       } else {
                         this.server.logger.debug(line);
@@ -408,7 +163,7 @@ describe('webSocketServer', () => {
                   });
 
                   this.implementation.installHandlers(this.server.server, {
-                    prefix: '/ws',
+                    prefix: "/ws",
                   });
                 }
 
@@ -431,7 +186,7 @@ describe('webSocketServer', () => {
                 }
 
                 onConnection(f) {
-                  this.implementation.on('connection', (connection) => {
+                  this.implementation.on("connection", (connection) => {
                     f(connection, {
                       host: null,
                     });
@@ -439,7 +194,7 @@ describe('webSocketServer', () => {
                 }
 
                 onConnectionClose(connection, f) {
-                  connection.on('close', f);
+                  connection.on("close", f);
                 }
               },
             },
@@ -447,12 +202,12 @@ describe('webSocketServer', () => {
           );
         });
 
-        it('results in an error', (done) => {
+        it("results in an error", (done) => {
           const data = [];
           const client = new SockJS(`http://localhost:${port}/ws`);
 
           client.onopen = () => {
-            data.push('open');
+            data.push("open");
           };
 
           client.onmessage = (e) => {
@@ -460,7 +215,7 @@ describe('webSocketServer', () => {
           };
 
           client.onclose = () => {
-            data.push('close');
+            data.push("close");
           };
 
           setTimeout(() => {
@@ -468,98 +223,6 @@ describe('webSocketServer', () => {
             done();
           }, 5000);
         });
-      });
-    });
-
-    describe('server', () => {
-      let MockWebsocketServer;
-
-      beforeEach((done) => {
-        jest.mock('../../lib/servers/WebsocketServer');
-        mockedTestServer = require('../helpers/test-server');
-        MockWebsocketServer = require('../../lib/servers/WebsocketServer');
-
-        server = mockedTestServer.start(
-          config,
-          {
-            port,
-          },
-          done
-        );
-      });
-
-      afterEach((done) => {
-        mockedTestServer.close(done);
-        jest.resetAllMocks();
-        jest.resetModules();
-
-        server = null;
-      });
-
-      it('should use server implementation correctly', () => {
-        const mockServerInstance = MockWebsocketServer.mock.instances[0];
-
-        const connectionObj = {
-          foo: 'bar',
-        };
-        // this simulates a client connecting to the server
-        mockServerInstance.onConnection.mock.calls[0][0](connectionObj, {
-          host: `localhost:${port}`,
-          origin: `http://localhost:${port}`,
-        });
-
-        expect(server.webSocketConnections.length).toEqual(1);
-        expect(server.webSocketConnections).toMatchSnapshot();
-
-        // this simulates a client leaving the server
-        mockServerInstance.onConnectionClose.mock.calls[0][1](connectionObj);
-
-        expect(server.webSocketConnections.length).toEqual(0);
-
-        // check that the dev server was passed to the socket server implementation constructor
-        expect(MockWebsocketServer.mock.calls[0].length).toEqual(1);
-        expect(MockWebsocketServer.mock.calls[0][0].options.port).toEqual(port);
-
-        expect(mockServerInstance.onConnection.mock.calls).toMatchSnapshot();
-        expect(mockServerInstance.send.mock.calls.length).toEqual(5);
-        // call 0 to the send() method is hot
-        expect(mockServerInstance.send.mock.calls[0]).toMatchSnapshot();
-        // call 1 to the send() method is liveReload
-        expect(mockServerInstance.send.mock.calls[1]).toMatchSnapshot();
-        // call 3 to the send() method is hash data, so we skip it
-        // call 4 to the send() method is the "ok" message
-        expect(mockServerInstance.send.mock.calls[4]).toMatchSnapshot();
-        // close should not be called because the server never forcefully closes
-        // a successful client connection
-        expect(mockServerInstance.close.mock.calls.length).toEqual(0);
-        expect(
-          mockServerInstance.onConnectionClose.mock.calls
-        ).toMatchSnapshot();
-      });
-
-      it('should close client with bad headers', () => {
-        const mockServerInstance = MockWebsocketServer.mock.instances[0];
-
-        // this simulates a client connecting to the server
-        mockServerInstance.onConnection.mock.calls[0][0](
-          {
-            foo: 'bar',
-          },
-          {
-            host: null,
-          }
-        );
-        expect(server.webSocketConnections.length).toEqual(0);
-        expect(MockWebsocketServer.mock.calls[0].length).toEqual(1);
-        expect(MockWebsocketServer.mock.calls[0][0].options.port).toEqual(port);
-        expect(mockServerInstance.onConnection.mock.calls).toMatchSnapshot();
-        // the only call to send() here should be an invalid header message
-        expect(mockServerInstance.send.mock.calls).toMatchSnapshot();
-        expect(mockServerInstance.closeConnection.mock.calls).toMatchSnapshot();
-        // onConnectionClose should never get called since the client should be closed first
-        expect(mockServerInstance.onConnectionClose.mock.calls.length).toEqual(
-          0
-        );
       });
     });
   });
